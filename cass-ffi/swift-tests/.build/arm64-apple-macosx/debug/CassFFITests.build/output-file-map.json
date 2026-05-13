@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/primary.swiftdeps"
+  },
+  "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/Tests/CassFFITests/CassFFITests.swift": {
+    "dependencies": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/CassFFITests.d",
+    "object": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/CassFFITests.swift.o",
+    "swiftmodule": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/CassFFITests~partial.swiftmodule",
+    "swift-dependencies": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/CassFFITests.swiftdeps",
+    "diagnostics": "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITests.build/CassFFITests.dia"
+  }
+}
