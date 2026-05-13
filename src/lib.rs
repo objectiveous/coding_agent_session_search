@@ -13714,6 +13714,35 @@ fn search_lexical_repair_failed_error(reason: &str, err: anyhow::Error) -> CliEr
     }
 }
 
+/// Public entry point for downstream embedders (cass-ffi etc.) to run the
+/// same lexical self-heal that the cass CLI runs before each search command.
+/// Ensures the Tantivy index matches the canonical SQLite content; if the
+/// index is missing or stale, rebuilds it from the canonical DB.
+///
+/// Returns the action taken — one of `"skipped"`, `"refreshed-checkpoint"`,
+/// `"rebuilt-from-canonical-db"`, `"active-rebuild-searching-existing-index"`,
+/// `"waited-for-active-rebuild"` — for diagnostic logging. Production
+/// callers can ignore.
+///
+/// Added for `cass-ffi` (bd `one-tybc4w`) so embedded callers don't have to
+/// reimplement the self-heal pipeline before constructing a `SearchClient`.
+/// Sibling to `SearchClient::open`. Synchronous; do not call from an async
+/// context without `spawn_blocking`.
+pub fn run_search_lexical_self_heal(data_dir: &Path) -> anyhow::Result<&'static str> {
+    let db_path = data_dir.join("agent_search.db");
+    let index_path = crate::search::tantivy::expected_index_dir(data_dir);
+    let result = ensure_lexical_assets_for_search(
+        data_dir,
+        &db_path,
+        &index_path,
+        None,
+        std::time::Instant::now(),
+        false,
+    )
+    .map_err(|err| anyhow::anyhow!("{}: {}", err.kind, err.message))?;
+    Ok(result.action)
+}
+
 fn ensure_lexical_assets_for_search(
     data_dir: &Path,
     db_path: &Path,

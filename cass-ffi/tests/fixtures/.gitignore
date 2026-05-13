@@ -1,0 +1,15 @@
+# SQLite runtime sidecars created when cass-ffi tests open the fixture.
+# The fixture itself (agent_search.db + index/v1/) is checked in.
+*.db-shm
+*.db-wal
+
+# cass self-heal sidecars (created on first search()):
+search_demo_data/index-run.lock
+search_demo_data/doctor/
+search_demo_data/tmp_home/
+
+# Tantivy runtime locks + managed-state JSON inside the index dir.
+# The committed index files are the segment payloads (.fast/.idx/.term/etc.)
+# plus meta.json — locks regenerate on first reader open.
+search_demo_data/index/*/.tantivy-*.lock
+search_demo_data/index/*/.managed.json
