@@ -1,3 +1,0 @@
-module CassFFITestsPackageTests {
-    header "/Users/kenpo/SoftwareProjects/collection-one/OneWorkspace/Vendor/Cass/coding_agent_session_search/cass-ffi/swift-tests/.build/arm64-apple-macosx/debug/CassFFITestsPackageTests.build/include/CassFFITestsPackageTests-Swift.h"
-}

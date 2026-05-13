@@ -1,3 +1,5 @@
 target/
 generated/
 Cargo.lock
+swift-tests/.build/
+swift-tests/Package.resolved
