@@ -23,7 +23,7 @@ console = "*"
 colored = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
-toon = { path = "../toon_rust", package = "tru" }
+toon = { version = "*", git = "https://github.com/Dicklesworthstone/toon_rust", rev = "5669b72a", package = "tru" }
 tempfile = "*"
 wait-timeout = "*"
 rmp-serde = "*"  # MessagePack for binary metadata serialization (Opt 3.1)
@@ -33,7 +33,7 @@ which = "*"
 shell-words = "*"
 dotenvy = "*"
 notify = "*"
-frankensqlite = { path = "../frankensqlite/crates/fsqlite", package = "fsqlite", features = ["fts5"] }
+frankensqlite = { version = "*", git = "https://github.com/Dicklesworthstone/frankensqlite", rev = "266dc98f", package = "fsqlite", features = ["fts5"] }
 rayon = "*"
 crossbeam-channel = "*"
 parking_lot = "*"
@@ -47,10 +47,10 @@ regex = "*"
 portable-pty = "*"
 # FrankenTUI migration foundation (bead 2noh9.2.1).
 # Strategy: pin a Git revision for reproducible CI builds.
-ftui = { path = "../frankentui/crates/ftui" }
-ftui-runtime = { path = "../frankentui/crates/ftui-runtime", features = ["native-backend", "crossterm-compat"] }
-ftui-tty = { path = "../frankentui/crates/ftui-tty" }
-ftui-extras = { path = "../frankentui/crates/ftui-extras", default-features = false, features = ["markdown", "syntax", "charts", "canvas", "theme", "clipboard", "clipboard-fallback", "export", "visual-fx", "forms", "validation", "help"] }
+ftui = { version = "*", git = "https://github.com/Dicklesworthstone/frankentui", rev = "5f78cfa0" }
+ftui-runtime = { version = "*", git = "https://github.com/Dicklesworthstone/frankentui", rev = "5f78cfa0", features = ["native-backend", "crossterm-compat"] }
+ftui-tty = { version = "*", git = "https://github.com/Dicklesworthstone/frankentui", rev = "5f78cfa0" }
+ftui-extras = { version = "*", git = "https://github.com/Dicklesworthstone/frankentui", rev = "5f78cfa0", default-features = false, features = ["markdown", "syntax", "charts", "canvas", "theme", "clipboard", "clipboard-fallback", "export", "visual-fx", "forms", "validation", "help"] }
 dirs = "*"
 walkdir = "*"
 glob = "*"
@@ -72,8 +72,8 @@ half = { version = "*", features = ["bytemuck"] }
 memmap2 = "*"
 bytemuck = "*"
 fastembed = { version = "*", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
-frankensearch = { path = "../frankensearch/frankensearch", default-features = false, features = ["hash", "lexical", "ann", "fastembed-reranker"] }
-franken-agent-detection = { path = "../franken_agent_detection", features = ["connectors", "cursor", "chatgpt", "opencode", "crush", "hermes"] }
+frankensearch = { version = "*", git = "https://github.com/Dicklesworthstone/frankensearch", rev = "831b3b13", default-features = false, features = ["hash", "lexical", "ann", "fastembed-reranker"] }
+franken-agent-detection = { version = "*", git = "https://github.com/Dicklesworthstone/franken_agent_detection", rev = "2262339794520540d52cb3a2e0fa9cfc627ad4fb", features = ["connectors", "cursor", "chatgpt", "opencode", "crush", "hermes"] }
 wide = "*"  # Portable SIMD for P0 Opt 2: SIMD dot product
 arrayvec = "*"  # Stack-based arrays for P1 Opt 1.4: Edge N-gram optimization
 bloomfilter = "*"  # Probabilistic membership testing for P2 Opt 3.3: Workspace Cache
@@ -147,7 +147,7 @@ rand_chacha = "0.10"
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 # frankensqlite compat gate tests (bead 3vvqa) — fsqlite-types needed for SqliteValue
 # enum variants in test assertions. The main fsqlite dep is available as `frankensqlite`.
-fsqlite-types = { path = "../frankensqlite/crates/fsqlite-types", package = "fsqlite-types" }
+fsqlite-types = { version = "*", git = "https://github.com/Dicklesworthstone/frankensqlite", rev = "266dc98f", package = "fsqlite-types" }
 
 [[bin]]
 name = "cass"
@@ -192,30 +192,35 @@ strip = false
 # build.rs validates the committed path overrides below and can validate
 # sibling repos above when `strict-path-dep-validation` is enabled.
 #
-# LOCAL DEVELOPMENT: Uncomment the [patch] sections below to build against
-# local sibling repo checkouts instead of pinned git revisions. These are
-# commented out by default so that a clean clone builds without requiring
-# specific directory layout. See build.rs for validation details.
+# OneApp cohort-fork path overrides (see CLAUDE.md "Cohort-fork carve-out").
+# Cass's build.rs requires the main `[dependencies]` entries above to keep
+# their git+rev shape (the dependency-contract validator enforces this).
+# These [patch.<url>] blocks then redirect cargo to the sibling submodule
+# checkouts under Vendor/Cass/ at resolution time. Each fork's main branch
+# is our development surface.
 #
-# A fresh-clone build regression guard runs in CI (.github/workflows/fresh-clone-build.yml)
-# — if you re-enable any of these [patch] blocks, that workflow will fail.
-#
-# [patch."https://github.com/Dicklesworthstone/frankensqlite"]
-# fsqlite = { path = "../frankensqlite/crates/fsqlite" }
-# fsqlite-types = { path = "../frankensqlite/crates/fsqlite-types" }
-# [patch."https://github.com/Dicklesworthstone/franken_agent_detection"]
-# franken-agent-detection = { path = "../franken_agent_detection" }
-#
-# Enable strict validation before uncommenting any additional sibling path overrides:
-# cargo check --features strict-path-dep-validation
-# [patch."https://github.com/Dicklesworthstone/frankensearch"]
-# frankensearch = { path = "../frankensearch/frankensearch" }
-# frankensearch-core = { path = "../frankensearch/crates/frankensearch-core" }
-# frankensearch-index = { path = "../frankensearch/crates/frankensearch-index" }
-# frankensearch-embed = { path = "../frankensearch/crates/frankensearch-embed" }
-# frankensearch-fusion = { path = "../frankensearch/crates/frankensearch-fusion" }
-# frankensearch-lexical = { path = "../frankensearch/crates/frankensearch-lexical" }
-# frankensearch-rerank = { path = "../frankensearch/crates/frankensearch-rerank" }
+# Upstream's fresh-clone CI guard (.github/workflows/fresh-clone-build.yml)
+# will fail with these enabled — fine for our fork, since we don't run that
+# workflow on the oneapp/path-pin-cohort branch.
+
+[patch."https://github.com/Dicklesworthstone/frankensqlite"]
+fsqlite = { path = "../frankensqlite/crates/fsqlite" }
+fsqlite-types = { path = "../frankensqlite/crates/fsqlite-types" }
+
+[patch."https://github.com/Dicklesworthstone/franken_agent_detection"]
+franken-agent-detection = { path = "../franken_agent_detection" }
+
+[patch."https://github.com/Dicklesworthstone/frankensearch"]
+frankensearch = { path = "../frankensearch/frankensearch" }
+
+[patch."https://github.com/Dicklesworthstone/frankentui"]
+ftui = { path = "../frankentui/crates/ftui" }
+ftui-runtime = { path = "../frankentui/crates/ftui-runtime" }
+ftui-tty = { path = "../frankentui/crates/ftui-tty" }
+ftui-extras = { path = "../frankentui/crates/ftui-extras" }
+
+[patch."https://github.com/Dicklesworthstone/toon_rust"]
+tru = { path = "../toon_rust" }
 
 [workspace.metadata.dist]
 targets = ["x86_64-unknown-linux-gnu"]
