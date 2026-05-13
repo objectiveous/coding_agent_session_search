@@ -137,6 +137,40 @@ func loadConversationRoundTrips() async throws {
 }
 
 @Test
+func startIndexReturnsRunWithPollableSnapshot() async throws {
+    // Smoke test for the FFI plumbing on the indexing surface. We don't
+    // exercise the live indexer against agent paths here — that requires
+    // safe-to-stomp filesystem state and lives in the manual-verification
+    // path in one-6oils2.5 (auto-index on plugin activation). What this
+    // test guarantees is that start_index returns an IndexRun, snapshot()
+    // produces a well-formed value, and wait_for_completion eventually
+    // returns rather than hanging.
+    let dataDir = try copyFixtureToTempdir()
+    defer { try? FileManager.default.removeItem(at: dataDir) }
+
+    let engine = try CassEngine.open(dataDir: dataDir.path)
+    let run = try await engine.startIndex(forceRebuild: false)
+
+    let snap = run.snapshot()
+    // Phase is one of the documented strings; counters are non-negative.
+    #expect(["idle", "scanning", "indexing"].contains(snap.phase))
+
+    // wait_for_completion either succeeds or surfaces a CassError;
+    // either way it must return — no hang.
+    do {
+        let final = try await run.waitForCompletion()
+        #expect(["idle", "scanning", "indexing"].contains(final.phase))
+    } catch let error as CassError {
+        // Acceptable on the fixture dir — cass may surface kinds like
+        // "cass-error" when no real agent sources are reachable.
+        switch error {
+        case .Failed(_, let kind, _, _, _):
+            #expect(!kind.isEmpty)
+        }
+    }
+}
+
+@Test
 func expandAroundReturnsAWindow() async throws {
     let dataDir = try copyFixtureToTempdir()
     defer { try? FileManager.default.removeItem(at: dataDir) }

@@ -29,12 +29,16 @@
 //! per-handle actors with their own `CancellationToken` — those land
 //! alongside their methods in subsequent passes.
 
+mod index_run;
 mod storage_worker;
 mod types;
+
+pub use index_run::IndexRun;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use coding_agent_search::indexer::{IndexOptions, IndexingProgress, run_index};
 use coding_agent_search::model::types::{
     Conversation as CassConversation, Message as CassMessage, MessageRole as CassMessageRole,
     Workspace as CassWorkspace,
@@ -49,7 +53,8 @@ use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 
 pub use types::{
-    CassError, Conversation, Message, MessageRole, SearchHit, SearchOpts, TimeFilter, Workspace,
+    CassError, Conversation, IndexProgressSnapshot, Message, MessageRole, SearchHit, SearchOpts,
+    TimeFilter, Workspace,
 };
 
 use storage_worker::{StorageCmd, StorageHandle, StorageWorker};
@@ -249,6 +254,58 @@ impl CassEngine {
     /// bundle-scoped data dir without re-resolving it.
     pub fn data_dir(&self) -> String {
         self.data_dir.to_string_lossy().into_owned()
+    }
+
+    /// Trigger a one-shot indexing pass against this engine's data_dir.
+    /// cass's connectors auto-discover known agent directories
+    /// (`~/.codex/sessions`, `~/.claude/projects`, and the other agents
+    /// registered in `coding_agent_search::connectors::*`) — Flashbacks
+    /// does not enumerate paths itself.
+    ///
+    /// `force_rebuild=false` runs an incremental scan that skips already-
+    /// indexed sessions (cheap on subsequent launches). `true` forces a
+    /// from-scratch rebuild (slow; only for explicit user request).
+    ///
+    /// Returns an `IndexRun` handle the caller polls via `snapshot()` for
+    /// UI updates or awaits via `wait_for_completion()`.
+    pub async fn start_index(
+        &self,
+        force_rebuild: bool,
+    ) -> Result<Arc<IndexRun>, CassError> {
+        // The shared progress handle threads through to cass's run_index
+        // and back to IndexRun.snapshot via the same Arc.
+        let progress = Arc::new(IndexingProgress::default());
+
+        let data_dir = self.data_dir.clone();
+        let db_path = data_dir.join("agent_search.db");
+
+        let opts = IndexOptions {
+            full: true,
+            force_rebuild,
+            watch: false,
+            watch_once_paths: None,
+            db_path,
+            data_dir,
+            // v1 is lexical-only — semantic indexing requires a separate
+            // embedder install flow that lands later.
+            semantic: false,
+            build_hnsw: false,
+            embedder: "hash".to_string(),
+            progress: Some(progress.clone()),
+            watch_interval_secs: 30,
+        };
+
+        // cass's run_index is synchronous; hand it to the engine's tokio
+        // runtime via spawn_blocking so the FFI's async surface doesn't
+        // pin a reactor thread. Errors from cass map onto CassError.
+        let join = self.runtime.spawn_blocking(move || {
+            run_index(opts, None).map_err(CassError::from)
+        });
+
+        Ok(Arc::new(IndexRun {
+            progress,
+            join_handle: tokio::sync::Mutex::new(Some(join)),
+        }))
     }
 }
 

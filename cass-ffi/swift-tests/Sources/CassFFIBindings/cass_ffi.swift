@@ -615,6 +615,22 @@ public protocol CassEngineProtocol: AnyObject, Sendable {
     func search(query: String, opts: SearchOpts) async throws  -> [SearchHit]
     
     /**
+     * Trigger a one-shot indexing pass against this engine's data_dir.
+     * cass's connectors auto-discover known agent directories
+     * (`~/.codex/sessions`, `~/.claude/projects`, and the other agents
+     * registered in `coding_agent_search::connectors::*`) — Flashbacks
+     * does not enumerate paths itself.
+     *
+     * `force_rebuild=false` runs an incremental scan that skips already-
+     * indexed sessions (cheap on subsequent launches). `true` forces a
+     * from-scratch rebuild (slow; only for explicit user request).
+     *
+     * Returns an `IndexRun` handle the caller polls via `snapshot()` for
+     * UI updates or awaits via `wait_for_completion()`.
+     */
+    func startIndex(forceRebuild: Bool) async throws  -> IndexRun
+    
+    /**
      * Returns the cass-ffi crate version. Verified to round-trip through
      * the UniFFI scaffolding by `cargo run --bin uniffi-bindgen` +
      * downstream Swift consumers.
@@ -824,6 +840,37 @@ open func search(query: String, opts: SearchOpts)async throws  -> [SearchHit]  {
 }
     
     /**
+     * Trigger a one-shot indexing pass against this engine's data_dir.
+     * cass's connectors auto-discover known agent directories
+     * (`~/.codex/sessions`, `~/.claude/projects`, and the other agents
+     * registered in `coding_agent_search::connectors::*`) — Flashbacks
+     * does not enumerate paths itself.
+     *
+     * `force_rebuild=false` runs an incremental scan that skips already-
+     * indexed sessions (cheap on subsequent launches). `true` forces a
+     * from-scratch rebuild (slow; only for explicit user request).
+     *
+     * Returns an `IndexRun` handle the caller polls via `snapshot()` for
+     * UI updates or awaits via `wait_for_completion()`.
+     */
+open func startIndex(forceRebuild: Bool)async throws  -> IndexRun  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cass_ffi_fn_method_cassengine_start_index(
+                    self.uniffiCloneHandle(),
+                    FfiConverterBool.lower(forceRebuild)
+                )
+            },
+            pollFunc: ffi_cass_ffi_rust_future_poll_u64,
+            completeFunc: ffi_cass_ffi_rust_future_complete_u64,
+            freeFunc: ffi_cass_ffi_rust_future_free_u64,
+            liftFunc: FfiConverterTypeIndexRun_lift,
+            errorHandler: FfiConverterTypeCassError_lift
+        )
+}
+    
+    /**
      * Returns the cass-ffi crate version. Verified to round-trip through
      * the UniFFI scaffolding by `cargo run --bin uniffi-bindgen` +
      * downstream Swift consumers.
@@ -879,6 +926,161 @@ public func FfiConverterTypeCassEngine_lift(_ handle: UInt64) throws -> CassEngi
 #endif
 public func FfiConverterTypeCassEngine_lower(_ value: CassEngine) -> UInt64 {
     return FfiConverterTypeCassEngine.lower(value)
+}
+
+
+
+
+
+
+public protocol IndexRunProtocol: AnyObject, Sendable {
+    
+    /**
+     * Cheap, non-blocking snapshot of the live progress counters. Safe to
+     * call from a Swift polling loop at any rate (every few hundred ms is
+     * typical for the UI footer).
+     */
+    func snapshot()  -> IndexProgressSnapshot
+    
+    /**
+     * Awaits the cass run_index task. Returns the final snapshot, or the
+     * CassError cass produced. Idempotent — calls after completion return
+     * `Ok(self.snapshot())` immediately without blocking.
+     */
+    func waitForCompletion() async throws  -> IndexProgressSnapshot
+    
+}
+open class IndexRun: IndexRunProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cass_ffi_fn_clone_indexrun(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cass_ffi_fn_free_indexrun(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Cheap, non-blocking snapshot of the live progress counters. Safe to
+     * call from a Swift polling loop at any rate (every few hundred ms is
+     * typical for the UI footer).
+     */
+open func snapshot() -> IndexProgressSnapshot  {
+    return try!  FfiConverterTypeIndexProgressSnapshot_lift(try! rustCall() {
+    uniffi_cass_ffi_fn_method_indexrun_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Awaits the cass run_index task. Returns the final snapshot, or the
+     * CassError cass produced. Idempotent — calls after completion return
+     * `Ok(self.snapshot())` immediately without blocking.
+     */
+open func waitForCompletion()async throws  -> IndexProgressSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cass_ffi_fn_method_indexrun_wait_for_completion(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_cass_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cass_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cass_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeIndexProgressSnapshot_lift,
+            errorHandler: FfiConverterTypeCassError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeIndexRun: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = IndexRun
+
+    public static func lift(_ handle: UInt64) throws -> IndexRun {
+        return IndexRun(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: IndexRun) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IndexRun {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: IndexRun, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexRun_lift(_ handle: UInt64) throws -> IndexRun {
+    return try FfiConverterTypeIndexRun.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexRun_lower(_ value: IndexRun) -> UInt64 {
+    return FfiConverterTypeIndexRun.lower(value)
 }
 
 
@@ -980,6 +1182,113 @@ public func FfiConverterTypeConversation_lift(_ buf: RustBuffer) throws -> Conve
 #endif
 public func FfiConverterTypeConversation_lower(_ value: Conversation) -> RustBuffer {
     return FfiConverterTypeConversation.lower(value)
+}
+
+
+/**
+ * Polled snapshot of an in-flight (or finished) indexing run.
+ *
+ * cass's progress model is poll-based: an `Arc<IndexingProgress>` shared
+ * with the indexer thread carries atomic counters + mutex-wrapped status
+ * strings. `IndexRun.snapshot()` projects that live state into a value
+ * type the Swift side can store, render, and pass around without holding
+ * any locks across `await` boundaries.
+ */
+public struct IndexProgressSnapshot: Equatable, Hashable {
+    /**
+     * Coarse phase: "idle", "scanning", "indexing".
+     */
+    public var phase: String
+    /**
+     * Sessions processed so far during the active or just-completed run.
+     */
+    public var current: UInt64
+    /**
+     * Best-known total session count for the run (may grow as the
+     * scanner discovers more sources).
+     */
+    public var total: UInt64
+    /**
+     * Agent slugs cass has discovered transcripts for during this run.
+     */
+    public var discoveredAgents: [String]
+    /**
+     * Last non-fatal error message the indexer recorded, if any.
+     */
+    public var lastError: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Coarse phase: "idle", "scanning", "indexing".
+         */phase: String, 
+        /**
+         * Sessions processed so far during the active or just-completed run.
+         */current: UInt64, 
+        /**
+         * Best-known total session count for the run (may grow as the
+         * scanner discovers more sources).
+         */total: UInt64, 
+        /**
+         * Agent slugs cass has discovered transcripts for during this run.
+         */discoveredAgents: [String], 
+        /**
+         * Last non-fatal error message the indexer recorded, if any.
+         */lastError: String?) {
+        self.phase = phase
+        self.current = current
+        self.total = total
+        self.discoveredAgents = discoveredAgents
+        self.lastError = lastError
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension IndexProgressSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeIndexProgressSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IndexProgressSnapshot {
+        return
+            try IndexProgressSnapshot(
+                phase: FfiConverterString.read(from: &buf), 
+                current: FfiConverterUInt64.read(from: &buf), 
+                total: FfiConverterUInt64.read(from: &buf), 
+                discoveredAgents: FfiConverterSequenceString.read(from: &buf), 
+                lastError: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: IndexProgressSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.phase, into: &buf)
+        FfiConverterUInt64.write(value.current, into: &buf)
+        FfiConverterUInt64.write(value.total, into: &buf)
+        FfiConverterSequenceString.write(value.discoveredAgents, into: &buf)
+        FfiConverterOptionString.write(value.lastError, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexProgressSnapshot_lift(_ buf: RustBuffer) throws -> IndexProgressSnapshot {
+    return try FfiConverterTypeIndexProgressSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexProgressSnapshot_lower(_ value: IndexProgressSnapshot) -> RustBuffer {
+    return FfiConverterTypeIndexProgressSnapshot.lower(value)
 }
 
 
@@ -1692,6 +2001,31 @@ fileprivate struct FfiConverterOptionTypeTimeFilter: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMessage: FfiConverterRustBuffer {
     typealias SwiftType = [Message]
 
@@ -1845,7 +2179,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cass_ffi_checksum_method_cassengine_search() != 2872) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cass_ffi_checksum_method_cassengine_start_index() != 41517) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cass_ffi_checksum_method_cassengine_version() != 27281) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cass_ffi_checksum_method_indexrun_snapshot() != 755) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cass_ffi_checksum_method_indexrun_wait_for_completion() != 13073) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cass_ffi_checksum_constructor_cassengine_open() != 62190) {

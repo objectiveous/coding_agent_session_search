@@ -294,9 +294,34 @@ uint64_t uniffi_cass_ffi_fn_method_cassengine_load_conversation(uint64_t ptr, Ru
 uint64_t uniffi_cass_ffi_fn_method_cassengine_search(uint64_t ptr, RustBuffer query, RustBuffer opts
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_CASSENGINE_START_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_CASSENGINE_START_INDEX
+uint64_t uniffi_cass_ffi_fn_method_cassengine_start_index(uint64_t ptr, int8_t force_rebuild
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_CASSENGINE_VERSION
 #define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_CASSENGINE_VERSION
 RustBuffer uniffi_cass_ffi_fn_method_cassengine_version(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_CLONE_INDEXRUN
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_CLONE_INDEXRUN
+uint64_t uniffi_cass_ffi_fn_clone_indexrun(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_FREE_INDEXRUN
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_FREE_INDEXRUN
+void uniffi_cass_ffi_fn_free_indexrun(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_INDEXRUN_SNAPSHOT
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_INDEXRUN_SNAPSHOT
+RustBuffer uniffi_cass_ffi_fn_method_indexrun_snapshot(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_INDEXRUN_WAIT_FOR_COMPLETION
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_FN_METHOD_INDEXRUN_WAIT_FOR_COMPLETION
+uint64_t uniffi_cass_ffi_fn_method_indexrun_wait_for_completion(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CASS_FFI_RUSTBUFFER_ALLOC
@@ -595,9 +620,27 @@ uint16_t uniffi_cass_ffi_checksum_method_cassengine_search(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_CASSENGINE_START_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_CASSENGINE_START_INDEX
+uint16_t uniffi_cass_ffi_checksum_method_cassengine_start_index(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_CASSENGINE_VERSION
 #define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_CASSENGINE_VERSION
 uint16_t uniffi_cass_ffi_checksum_method_cassengine_version(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_INDEXRUN_SNAPSHOT
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_INDEXRUN_SNAPSHOT
+uint16_t uniffi_cass_ffi_checksum_method_indexrun_snapshot(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_INDEXRUN_WAIT_FOR_COMPLETION
+#define UNIFFI_FFIDEF_UNIFFI_CASS_FFI_CHECKSUM_METHOD_INDEXRUN_WAIT_FOR_COMPLETION
+uint16_t uniffi_cass_ffi_checksum_method_indexrun_wait_for_completion(void
     
 );
 #endif
