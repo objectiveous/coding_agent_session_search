@@ -104,6 +104,28 @@ pub struct TimeFilter {
     pub before_ms: Option<i64>,
 }
 
+/// Polled snapshot of an in-flight (or finished) indexing run.
+///
+/// cass's progress model is poll-based: an `Arc<IndexingProgress>` shared
+/// with the indexer thread carries atomic counters + mutex-wrapped status
+/// strings. `IndexRun.snapshot()` projects that live state into a value
+/// type the Swift side can store, render, and pass around without holding
+/// any locks across `await` boundaries.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct IndexProgressSnapshot {
+    /// Coarse phase: "idle", "scanning", "indexing".
+    pub phase: String,
+    /// Sessions processed so far during the active or just-completed run.
+    pub current: u64,
+    /// Best-known total session count for the run (may grow as the
+    /// scanner discovers more sources).
+    pub total: u64,
+    /// Agent slugs cass has discovered transcripts for during this run.
+    pub discovered_agents: Vec<String>,
+    /// Last non-fatal error message the indexer recorded, if any.
+    pub last_error: Option<String>,
+}
+
 /// Search-mode discriminator. The actor wrap dispatches on the variant
 /// to the corresponding cass `SearchClient` method (lexical → `search`
 /// with default mode, semantic/hybrid → `search_semantic`/`search_hybrid`
