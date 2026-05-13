@@ -7,38 +7,52 @@
 //! fields, enums with associated-data variants, and async functions —
 //! swift-bridge 0.1.59 panics in codegen for all four of those.
 //!
-//! Concurrency model (decided in bd one-lf8lu8): short cass calls dispatch
-//! to `tokio::spawn_blocking` on an engine-owned multi-thread tokio
-//! runtime. Long-running ops (progressive search, model install, reindex)
-//! get per-handle actors with mpsc channels + `CancellationToken` — those
-//! land alongside their methods in subsequent passes of bd one-tybc4w.
+//! Concurrency model (decided in bd one-lf8lu8): two halves.
 //!
-//! Storage handle layering: `SearchClient` is `Send` (cass wraps its
-//! frankensqlite `Connection` in `SendConnection` with an `unsafe impl Send`
-//! and serializes access via an internal `Mutex`). `FrankenStorage` is
-//! NOT `Send` — its `Connection` exposes the raw `Rc<RefCell<…>>` fields.
-//! For now the engine holds only `SearchClient`, which is sufficient for
-//! the search-shaped FFI surface (`search`, `search_in_session`,
-//! `start_progressive_search`). The conversation-read methods
-//! (`load_conversation`, `expand_around`, `list_sessions`,
-//! `list_workspaces`, `list_agents`) need the dedicated worker-thread
-//! actor variant of the model and land in a follow-up pass — see the
-//! TODO at the bottom of this file.
+//! 1. Short search calls dispatch to `tokio::spawn_blocking` on the
+//!    engine-owned multi-thread tokio runtime. `SearchClient` is `Send`
+//!    (cass wraps its frankensqlite `Connection` in `SendConnection` with
+//!    an `unsafe impl Send` and serialises access via an internal `Mutex`),
+//!    so the closure can move an `Arc<SearchClient>` across the blocking
+//!    pool freely.
+//!
+//! 2. Storage reads (conversation reads, listing) go through a dedicated
+//!    worker-thread actor (`storage_worker::StorageWorker`). `FrankenStorage`
+//!    is `!Send` because its `Connection` exposes raw `Rc<RefCell<…>>`
+//!    fields — UniFFI's `FfiConverterArc<UT>: Send + Sync` means a bare
+//!    `FrankenStorage` cannot live inside a `#[derive(uniffi::Object)]`.
+//!    The actor pins the storage to one OS thread; engine async methods
+//!    send command messages over a `tokio::sync::mpsc` channel and `await`
+//!    a per-call `tokio::sync::oneshot::Receiver` for the reply.
+//!
+//! Long-running ops (progressive search, model install, reindex) get
+//! per-handle actors with their own `CancellationToken` — those land
+//! alongside their methods in subsequent passes.
 
+mod storage_worker;
 mod types;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use coding_agent_search::model::types::{
+    Conversation as CassConversation, Message as CassMessage, MessageRole as CassMessageRole,
+    Workspace as CassWorkspace,
+};
 use coding_agent_search::run_search_lexical_self_heal;
 use coding_agent_search::search::query::{
     FieldMask, MatchType, SearchClient, SearchFilters, SearchHit as CassSearchHit,
 };
 use coding_agent_search::search::tantivy::expected_index_dir;
+use coding_agent_search::ui::data::ConversationView;
 use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 
-pub use types::{CassError, SearchHit, SearchOpts, TimeFilter};
+pub use types::{
+    CassError, Conversation, Message, MessageRole, SearchHit, SearchOpts, TimeFilter, Workspace,
+};
+
+use storage_worker::{StorageCmd, StorageHandle, StorageWorker};
 
 uniffi::setup_scaffolding!();
 
@@ -60,10 +74,12 @@ impl DataLayout {
 #[derive(uniffi::Object)]
 pub struct CassEngine {
     runtime: Runtime,
-    /// `None` once `close()` has run; subsequent method calls return a
-    /// clean `engine-closed` error rather than leaking a panic across
-    /// the FFI boundary.
+    /// `None` once `close()` has run; subsequent search calls return a
+    /// clean `engine-closed` error rather than panicking.
     search: Mutex<Option<Arc<SearchClient>>>,
+    /// Worker-thread actor owning the `FrankenStorage`. `None` once
+    /// `close()` has run; the worker thread joins on Drop.
+    storage: Mutex<Option<StorageWorker>>,
     data_dir: PathBuf,
 }
 
@@ -79,6 +95,7 @@ impl CassEngine {
         Arc::new(Self {
             runtime,
             search: Mutex::new(None),
+            storage: Mutex::new(None),
             data_dir: PathBuf::new(),
         })
     }
@@ -93,9 +110,9 @@ impl CassEngine {
     /// Open a CassEngine against an existing cass data directory. The
     /// directory must contain `agent_search.db` (cass's canonical SQLite
     /// store) and the `index/<schema-version>/` Tantivy index that cass
-    /// emits during `cass index`. The SearchClient is opened once; the
-    /// engine holds it on a tokio multi-thread runtime so subsequent
-    /// `search` calls dispatch via `spawn_blocking`.
+    /// emits during `cass index`. Both halves of the concurrency model
+    /// (search-side `Arc<SearchClient>` + storage-side worker thread)
+    /// come up here; failures during either rollback the other.
     #[uniffi::constructor]
     pub fn open(data_dir: String) -> Result<Arc<Self>, CassError> {
         let data_dir = PathBuf::from(data_dir);
@@ -111,6 +128,10 @@ impl CassEngine {
         // for queries whose canonical content lives in SQLite.
         run_search_lexical_self_heal(&data_dir).map_err(CassError::from)?;
 
+        // Storage worker first: cheaper to roll back (drop the Sender,
+        // worker exits) than to roll back the SearchClient + tokio runtime.
+        let storage = StorageWorker::spawn(layout.db_path.clone())?;
+
         let search = SearchClient::open(&layout.index_path, Some(&layout.db_path))
             .map_err(CassError::from)?
             .ok_or_else(|| CassError::data_dir_missing_index(&layout.index_path, &layout.db_path))?;
@@ -119,22 +140,26 @@ impl CassEngine {
         Ok(Arc::new(Self {
             runtime,
             search: Mutex::new(Some(Arc::new(search))),
+            storage: Mutex::new(Some(storage)),
             data_dir,
         }))
     }
 
-    /// Close the engine, dropping the Tantivy reader + SQLite handle.
-    /// Idempotent: a second call is a no-op. Subsequent method calls
-    /// return a clean `engine-closed` error.
+    /// Close the engine: drop the SearchClient (Tantivy reader + SQLite
+    /// fallback), then drop the storage worker handle so its thread sees
+    /// the channel close, runs `FrankenStorage::close` (SQLite checkpoint),
+    /// and exits. Idempotent; subsequent method calls return a clean
+    /// `engine-closed` error.
     pub fn close(&self) -> Result<(), CassError> {
         let _ = self.search.lock().take();
+        let _ = self.storage.lock().take();
         Ok(())
     }
 
     /// Lexical / hybrid / semantic search across the indexed corpus.
-    /// Currently only `Lexical` is wired (the first method landing under
-    /// bd one-tybc4w). The other variants return `not-yet-implemented`
-    /// until their dispatch lands in subsequent passes.
+    /// Currently only `Lexical` is wired; the other variants return
+    /// `not-yet-implemented` until their dispatch lands in subsequent
+    /// passes.
     pub async fn search(
         &self,
         query: String,
@@ -168,11 +193,74 @@ impl CassEngine {
         }
     }
 
-    /// Returns the on-disk path the engine was opened against. Useful for
-    /// diagnostics and for the curation flows that need the bundle-scoped
-    /// data dir without re-resolving it.
+    /// List every workspace cass has indexed at least one conversation
+    /// under. Routes through the storage worker actor.
+    pub async fn list_workspaces(&self) -> Result<Vec<Workspace>, CassError> {
+        let storage = self.storage_handle()?;
+        storage
+            .send(|reply| StorageCmd::ListWorkspaces { reply })
+            .await
+    }
+
+    /// Load a full conversation by its on-disk source path (the same
+    /// `source_path` cass returns on each `SearchHit`). Returns `None`
+    /// when no conversation matches that path. Routes through the
+    /// storage worker actor.
+    pub async fn load_conversation(
+        &self,
+        source_path: String,
+    ) -> Result<Option<Conversation>, CassError> {
+        let storage = self.storage_handle()?;
+        storage
+            .send(|reply| StorageCmd::LoadConversation {
+                source_path,
+                reply,
+            })
+            .await
+    }
+
+    /// Window of `before` messages preceding and `after` messages
+    /// following the message at `(conversation_id, message_idx)`.
+    /// Anchor not found falls back to the conversation start (returns
+    /// the first `before+after+1` messages). Built atop
+    /// `FrankenStorage::fetch_messages`; routes through the storage
+    /// worker actor.
+    pub async fn expand_around(
+        &self,
+        conversation_id: i64,
+        message_idx: i64,
+        before: u32,
+        after: u32,
+    ) -> Result<Vec<Message>, CassError> {
+        let storage = self.storage_handle()?;
+        storage
+            .send(|reply| StorageCmd::ExpandAround {
+                conversation_id,
+                message_idx,
+                before,
+                after,
+                reply,
+            })
+            .await
+    }
+
+    /// Returns the on-disk path the engine was opened against. Useful
+    /// for diagnostics and for the curation flows that need the
+    /// bundle-scoped data dir without re-resolving it.
     pub fn data_dir(&self) -> String {
         self.data_dir.to_string_lossy().into_owned()
+    }
+}
+
+impl CassEngine {
+    /// Snapshot the storage handle out of its mutex without holding the
+    /// guard across an await. The clone here is on the channel sender,
+    /// not the worker — cheap.
+    fn storage_handle(&self) -> Result<StorageHandle, CassError> {
+        match self.storage.lock().as_ref() {
+            Some(worker) => Ok(worker.handle()),
+            None => Err(CassError::engine_closed()),
+        }
     }
 }
 
@@ -197,6 +285,81 @@ impl From<CassSearchHit> for SearchHit {
     }
 }
 
+impl From<CassWorkspace> for Workspace {
+    fn from(ws: CassWorkspace) -> Self {
+        Self {
+            id: ws.id,
+            path: ws.path.to_string_lossy().into_owned(),
+            display_name: ws.display_name,
+        }
+    }
+}
+
+impl From<CassMessageRole> for MessageRole {
+    fn from(role: CassMessageRole) -> Self {
+        match role {
+            CassMessageRole::User => MessageRole::User,
+            CassMessageRole::Agent => MessageRole::Agent,
+            CassMessageRole::Tool => MessageRole::Tool,
+            CassMessageRole::System => MessageRole::System,
+            CassMessageRole::Other(label) => MessageRole::Other { label },
+        }
+    }
+}
+
+impl From<CassMessage> for Message {
+    fn from(msg: CassMessage) -> Self {
+        Self {
+            id: msg.id,
+            idx: msg.idx,
+            role: MessageRole::from(msg.role),
+            author: msg.author,
+            created_at_ms: msg.created_at,
+            content: msg.content,
+        }
+    }
+}
+
+impl Conversation {
+    /// Project a cass `ConversationView` (convo + loaded messages +
+    /// workspace metadata) into the FFI value type. Uses the View's
+    /// own `messages` rather than `convo.messages` because the loader
+    /// puts the resolved messages on the View; the inner `Conversation`
+    /// may carry them empty.
+    pub(crate) fn from_view(view: ConversationView) -> Self {
+        let ConversationView { convo, messages, .. } = view;
+        let CassConversation {
+            id,
+            agent_slug,
+            workspace,
+            external_id,
+            title,
+            source_path,
+            started_at,
+            ended_at,
+            approx_tokens,
+            source_id,
+            origin_host,
+            ..
+        } = convo;
+
+        Self {
+            id,
+            agent_slug,
+            workspace_path: workspace.map(|p| p.to_string_lossy().into_owned()),
+            external_id,
+            title,
+            source_path: source_path.to_string_lossy().into_owned(),
+            started_at_ms: started_at,
+            ended_at_ms: ended_at,
+            approx_tokens,
+            messages: messages.into_iter().map(Message::from).collect(),
+            source_id,
+            origin_host,
+        }
+    }
+}
+
 fn match_type_to_string(mt: MatchType) -> &'static str {
     match mt {
         MatchType::Exact => "exact",
@@ -207,18 +370,6 @@ fn match_type_to_string(mt: MatchType) -> &'static str {
         MatchType::ImplicitWildcard => "implicit_wildcard",
     }
 }
-
-// TODO(one-tybc4w follow-up): FrankenStorage-backed methods
-// (`load_conversation`, `expand_around`, `list_sessions`, etc.) need a
-// dedicated worker-thread actor — `FrankenStorage` is `!Send` because
-// its `Connection` carries `Rc<RefCell<…>>` internals. The pattern: spawn
-// one OS thread per engine that owns the storage, expose async methods
-// that send command messages over a `tokio::sync::mpsc` channel and
-// `await` a `tokio::sync::oneshot::Receiver` for the reply. That actor
-// also gets the `tokio_util::sync::CancellationToken` that progressive-
-// search / install / reindex handles use. Out of scope for this pass:
-// the search-only surface is what the v1 Flashbacks slice (one-g9e)
-// actually depends on.
 
 #[cfg(test)]
 mod tests {

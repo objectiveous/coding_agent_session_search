@@ -40,6 +40,63 @@ pub struct SearchHit {
     pub origin_host: Option<String>,
 }
 
+/// Role of a single message in a transcript.
+///
+/// Maps cass-internal `crate::model::types::MessageRole` to a UniFFI enum.
+/// The tuple variant `Other(String)` becomes a struct variant
+/// `Other { label }` per SURFACE.md to keep Swift's `case .other(label:)`
+/// labelling consistent.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum MessageRole {
+    User,
+    Agent,
+    Tool,
+    System,
+    Other { label: String },
+}
+
+/// A single message inside a conversation. Mirrors cass-internal
+/// `crate::model::types::Message` minus the runtime-only `extra_json` /
+/// `snippets` fields, which UniFFI cannot represent without a richer
+/// JSON value type. Those are owned by curation flows that live above
+/// this surface.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Message {
+    pub id: Option<i64>,
+    pub idx: i64,
+    pub role: MessageRole,
+    pub author: Option<String>,
+    pub created_at_ms: Option<i64>,
+    pub content: String,
+}
+
+/// A conversation projected to FFI-safe types. `messages` is the full
+/// message list as cass returns it; for paginated reads use
+/// `expand_around` with a (conversation_id, message_idx) anchor.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Conversation {
+    pub id: Option<i64>,
+    pub agent_slug: String,
+    pub workspace_path: Option<String>,
+    pub external_id: Option<String>,
+    pub title: Option<String>,
+    pub source_path: String,
+    pub started_at_ms: Option<i64>,
+    pub ended_at_ms: Option<i64>,
+    pub approx_tokens: Option<i64>,
+    pub messages: Vec<Message>,
+    pub source_id: String,
+    pub origin_host: Option<String>,
+}
+
+/// A workspace cass has indexed at least one conversation under.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Workspace {
+    pub id: Option<i64>,
+    pub path: String,
+    pub display_name: Option<String>,
+}
+
 /// Time window filter shared by `SearchOpts` and `SessionFilter`.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct TimeFilter {
@@ -133,6 +190,20 @@ impl CassError {
                 "data_dir = {}; cass writes its DB at <data_dir>/agent_search.db",
                 data_dir.display()
             )),
+            retryable: false,
+        }
+    }
+
+    pub(crate) fn worker_died(what: &str) -> Self {
+        CassError::Failed {
+            code: 7,
+            kind: "storage-worker-died".to_string(),
+            message: format!(
+                "cass-ffi storage worker thread no longer running ({what}); engine is unusable until reopened."
+            ),
+            hint: Some(
+                "drop and reconstruct the CassEngine; this typically indicates a bug in the worker loop.".to_string(),
+            ),
             retryable: false,
         }
     }
