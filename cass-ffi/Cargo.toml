@@ -28,13 +28,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 coding-agent-search = { path = ".." }
-uniffi = { version = "0.31", features = ["cli"] }
+# `tokio` feature gives UniFFI's async machinery a tokio-aware executor
+# so methods declared with `#[uniffi::export(async_runtime = "tokio")]`
+# poll on the engine's runtime instead of UniFFI's built-in single-thread
+# default. Without it, `spawn_blocking().await` inside our async methods
+# deadlocks at runtime because there's no live tokio reactor on the
+# polling thread.
+uniffi = { version = "0.31", features = ["cli", "tokio"] }
 
 # Re-exported for error construction at the FFI boundary.
 anyhow = "*"
 thiserror = "*"
+parking_lot = "*"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 tokio-util = { version = "*", features = ["rt"] }
+
+[dev-dependencies]
+# Tests open a CassEngine against a tempdir copy of the in-tree fixture,
+# so they don't mutate the committed fixture under tests/fixtures/.
+tempfile = "3"
 
 [build-dependencies]
 # Modern UniFFI proc-macro mode doesn't strictly require a build.rs, but
