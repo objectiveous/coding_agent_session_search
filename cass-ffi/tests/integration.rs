@@ -11,6 +11,13 @@ use std::path::Path;
 
 use cass_ffi::{CassEngine, SearchOpts};
 
+fn current_thread_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime")
+}
+
 fn copy_fixture_to(temp_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -54,10 +61,7 @@ fn lexical_search_returns_at_least_one_hit_for_known_term() {
     // The fixture's first conversation contains an `aider` system message.
     // A lexical search for that term must round-trip through the FFI boundary
     // and come back as a non-empty Vec<SearchHit>.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
+    let runtime = current_thread_runtime();
     let hits = runtime
         .block_on(engine.search("aider".to_string(), SearchOpts::Lexical { limit: 10 }))
         .expect("lexical search should succeed");
@@ -86,10 +90,7 @@ fn close_makes_subsequent_calls_fail_cleanly() {
     let engine = CassEngine::open(tmp.path().to_string_lossy().into_owned()).expect("open");
     engine.close().expect("close");
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
+    let runtime = current_thread_runtime();
     let err = runtime
         .block_on(engine.search("aider".to_string(), SearchOpts::Lexical { limit: 10 }))
         .expect_err("search after close must fail, not succeed");
@@ -99,4 +100,107 @@ fn close_makes_subsequent_calls_fail_cleanly() {
         "expected kind 'engine-closed', got: {:?}",
         err
     );
+}
+
+#[test]
+fn list_workspaces_returns_indexed_workspaces_via_storage_actor() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    copy_fixture_to(tmp.path());
+
+    let engine = CassEngine::open(tmp.path().to_string_lossy().into_owned()).expect("open");
+    let runtime = current_thread_runtime();
+    let workspaces = runtime
+        .block_on(engine.list_workspaces())
+        .expect("list_workspaces should succeed");
+
+    // The fixture indexes at least one workspace (the aider transcript dir).
+    assert!(
+        !workspaces.is_empty(),
+        "expected at least one workspace from the demo fixture, got 0"
+    );
+    let first = &workspaces[0];
+    assert!(
+        !first.path.is_empty(),
+        "every Workspace should carry a non-empty path"
+    );
+}
+
+#[test]
+fn load_conversation_round_trips_via_storage_actor() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    copy_fixture_to(tmp.path());
+
+    let engine = CassEngine::open(tmp.path().to_string_lossy().into_owned()).expect("open");
+    let runtime = current_thread_runtime();
+
+    // Use a real source_path produced by search() so the test exercises the
+    // search → load_conversation flow end-to-end (the actual Flashbacks v1 + Session Replay path).
+    let hits = runtime
+        .block_on(engine.search("aider".to_string(), SearchOpts::Lexical { limit: 1 }))
+        .expect("search");
+    assert!(!hits.is_empty(), "fixture must yield at least one hit");
+    let source_path = hits[0].source_path.clone();
+
+    let conv = runtime
+        .block_on(engine.load_conversation(source_path.clone()))
+        .expect("load_conversation should succeed")
+        .expect("conversation should exist for the search hit's source_path");
+
+    assert_eq!(conv.source_path, source_path);
+    assert!(
+        !conv.messages.is_empty(),
+        "loaded conversation should carry its messages"
+    );
+    assert!(
+        !conv.agent_slug.is_empty(),
+        "conversation should carry an agent_slug"
+    );
+}
+
+#[test]
+fn expand_around_returns_a_window_of_messages_via_storage_actor() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    copy_fixture_to(tmp.path());
+
+    let engine = CassEngine::open(tmp.path().to_string_lossy().into_owned()).expect("open");
+    let runtime = current_thread_runtime();
+
+    // Resolve a real conversation_id from a search hit.
+    let hits = runtime
+        .block_on(engine.search("aider".to_string(), SearchOpts::Lexical { limit: 1 }))
+        .expect("search");
+    let source_path = hits[0].source_path.clone();
+    let conv = runtime
+        .block_on(engine.load_conversation(source_path))
+        .expect("load_conversation")
+        .expect("conversation present");
+    let conversation_id = conv.id.expect("conversation id should be set after a load");
+    let anchor_idx = conv.messages[0].idx;
+
+    let window = runtime
+        .block_on(engine.expand_around(conversation_id, anchor_idx, 0, 1))
+        .expect("expand_around");
+    assert!(
+        !window.is_empty(),
+        "expand_around should return at least the anchor message"
+    );
+    assert_eq!(
+        window[0].idx, anchor_idx,
+        "anchor message should appear first in the window"
+    );
+}
+
+#[test]
+fn list_workspaces_after_close_returns_engine_closed() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    copy_fixture_to(tmp.path());
+
+    let engine = CassEngine::open(tmp.path().to_string_lossy().into_owned()).expect("open");
+    engine.close().expect("close");
+
+    let runtime = current_thread_runtime();
+    let err = runtime
+        .block_on(engine.list_workspaces())
+        .expect_err("list_workspaces after close must fail");
+    assert_eq!(err.kind(), "engine-closed", "got: {:?}", err);
 }

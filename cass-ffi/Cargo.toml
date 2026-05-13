@@ -40,8 +40,9 @@ uniffi = { version = "0.31", features = ["cli", "tokio"] }
 anyhow = "*"
 thiserror = "*"
 parking_lot = "*"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "rt", "sync", "macros"] }
 tokio-util = { version = "*", features = ["rt"] }
+tracing = "*"
 
 [dev-dependencies]
 # Tests open a CassEngine against a tempdir copy of the in-tree fixture,
