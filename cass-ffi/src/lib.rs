@@ -1,17 +1,51 @@
 //! cass-ffi — Swift-facing FFI shim for the cass (coding-agent-search) library.
 //!
-//! This crate is intentionally lean: it exposes the ~15-function surface
-//! decided in bd `one-jn0t4w` and nothing else. It is NOT a generic
-//! Rust→Swift binding for the entire cass library; it is the surface sized
-//! to OneApp's SwiftUI screens.
+//! ## Surface
 //!
-//! The bridge module below is the source of truth that `swift-bridge-build`
-//! reads during `build.rs` to generate the matching Swift module under
-//! `generated/`. Consumers (the CassFFI.xcframework) embed that Swift
-//! module plus the static library produced by `cargo build --release`.
+//! See `cass-ffi/SURFACE.md` for the full 15-function + 4-handle + ~15-type
+//! design (the source of truth, decided in bd `one-jn0t4w`).
+//!
+//! ## Current state
+//!
+//! The bridge module below is intentionally minimal: an opaque `CassEngine`
+//! handle with a single `version()` static probe. This is enough to verify
+//! the entire build pipeline end-to-end:
+//!
+//! - cargo resolves the path-pin cohort under Vendor/Cass/
+//! - cass + cohort compile against nightly rustc
+//! - swift-bridge-build generates the Swift module + C header
+//! - `cargo build --release --lib` produces a usable libcass_ffi.a
+//!
+//! ## Why not the full surface yet
+//!
+//! swift-bridge 0.1.59 has codegen gaps that prevent the natural
+//! expression of cass's value types across the bridge:
+//!
+//! - **`Result<T, SharedStruct>` panics** in `BuiltInResult::custom_c_struct_name`
+//!   reaching `to_alpha_numeric_underscore_name`. Affects every fallible
+//!   method that wants to return a structured error.
+//! - **`Option<SharedStruct>` panics** in `bridged_option.rs:399` when used
+//!   as a shared-struct field. Affects e.g. `Option<TimeFilter>` inside
+//!   `SearchOpts`.
+//! - **Enums with associated-data variants** carrying `Vec<SharedStruct>`
+//!   or other complex types panic in `bridged_type.rs:1986`. Affects the
+//!   natural shape of `SearchEvent`, `ModelInstallEvent`, `ReindexEvent`.
+//! - **Doc comments on shared structs** are rejected outright by the macro.
+//!
+//! The full surface in SURFACE.md works around these gaps with flat-error
+//! envelope structs (e.g. `SearchHitsResult { hits, error_kind, error_message,
+//! ... }`) and `kind` discriminants in lieu of tagged unions. The conversion
+//! is mechanical but bloats the bridge file substantially and obscures the
+//! design intent — we land it incrementally in bd `one-vtg5eh` (actor wrap)
+//! alongside real impls, so each method's workaround is visible next to its
+//! real Rust code.
+//!
+//! Alternative: bump to a forked / patched swift-bridge that fixes these
+//! cases. Tracked separately.
 
-// Bridge module skeleton. The full surface lands in bd `one-orlzie`; this
-// commit only validates that the toolchain wires up end-to-end.
+mod types;
+pub use types::CassError;
+
 #[swift_bridge::bridge]
 mod ffi {
     extern "Rust" {
@@ -22,27 +56,16 @@ mod ffi {
     }
 }
 
-/// Opaque engine handle returned to Swift. Internally holds a tokio runtime
-/// and (later, in bd one-vtg5eh) an `Arc<FrankenStorage>`.
+/// Opaque engine handle. Real fields (`runtime: tokio::runtime::Runtime`,
+/// `storage: Arc<FrankenStorage>`) land in bd `one-vtg5eh`.
 pub struct CassEngine {
     _private: (),
 }
 
 impl CassEngine {
-    /// Static probe returning the cass crate version. Used by the xcframework
-    /// build script as a smoke test that the bridge symbol actually links.
+    /// Returns the cass-ffi crate version. Smoke-test used by the xcframework
+    /// build script to verify the bridge symbol actually links.
     pub fn version() -> String {
-        // `coding_agent_search` crate name -> imported below.
-        coding_agent_search_version()
+        env!("CARGO_PKG_VERSION").to_string()
     }
-}
-
-/// Wrapper around the cass crate's compile-time version constant. Kept as a
-/// free fn so it's easy to swap out later when CassEngine grows real state.
-fn coding_agent_search_version() -> String {
-    // The cass crate exposes its own version via `env!("CARGO_PKG_VERSION")`
-    // at its own compile site. We re-read it from our compile site, which is
-    // fine for an FFI smoke test — the value is "0.1.0" here, but a real
-    // `health()` impl will surface cass's version explicitly.
-    env!("CARGO_PKG_VERSION").to_string()
 }
