@@ -1,71 +1,42 @@
 //! cass-ffi — Swift-facing FFI shim for the cass (coding-agent-search) library.
 //!
-//! ## Surface
+//! Built on UniFFI 0.31's proc-macro mode (no UDL file). The full design —
+//! 15-fn surface, 4 opaque handles, ~15 value types — is documented in
+//! `cass-ffi/SURFACE.md`. We chose UniFFI over swift-bridge because UniFFI
+//! natively supports `Result<T, CustomError>`, `Option<Struct>` as struct
+//! fields, enums with associated-data variants, and async functions —
+//! swift-bridge 0.1.59 panics in codegen for all four of those.
 //!
-//! See `cass-ffi/SURFACE.md` for the full 15-function + 4-handle + ~15-type
-//! design (the source of truth, decided in bd `one-jn0t4w`).
-//!
-//! ## Current state
-//!
-//! The bridge module below is intentionally minimal: an opaque `CassEngine`
-//! handle with a single `version()` static probe. This is enough to verify
-//! the entire build pipeline end-to-end:
-//!
-//! - cargo resolves the path-pin cohort under Vendor/Cass/
-//! - cass + cohort compile against nightly rustc
-//! - swift-bridge-build generates the Swift module + C header
-//! - `cargo build --release --lib` produces a usable libcass_ffi.a
-//!
-//! ## Why not the full surface yet
-//!
-//! swift-bridge 0.1.59 has codegen gaps that prevent the natural
-//! expression of cass's value types across the bridge:
-//!
-//! - **`Result<T, SharedStruct>` panics** in `BuiltInResult::custom_c_struct_name`
-//!   reaching `to_alpha_numeric_underscore_name`. Affects every fallible
-//!   method that wants to return a structured error.
-//! - **`Option<SharedStruct>` panics** in `bridged_option.rs:399` when used
-//!   as a shared-struct field. Affects e.g. `Option<TimeFilter>` inside
-//!   `SearchOpts`.
-//! - **Enums with associated-data variants** carrying `Vec<SharedStruct>`
-//!   or other complex types panic in `bridged_type.rs:1986`. Affects the
-//!   natural shape of `SearchEvent`, `ModelInstallEvent`, `ReindexEvent`.
-//! - **Doc comments on shared structs** are rejected outright by the macro.
-//!
-//! The full surface in SURFACE.md works around these gaps with flat-error
-//! envelope structs (e.g. `SearchHitsResult { hits, error_kind, error_message,
-//! ... }`) and `kind` discriminants in lieu of tagged unions. The conversion
-//! is mechanical but bloats the bridge file substantially and obscures the
-//! design intent — we land it incrementally in bd `one-vtg5eh` (actor wrap)
-//! alongside real impls, so each method's workaround is visible next to its
-//! real Rust code.
-//!
-//! Alternative: bump to a forked / patched swift-bridge that fixes these
-//! cases. Tracked separately.
+//! Current state: scaffold-only. `CassEngine` is an opaque handle with a
+//! single `version()` constructor — enough to verify the build pipeline
+//! end-to-end. Real method bodies land in bd `one-vtg5eh` (actor wrap),
+//! one section of SURFACE.md at a time, against an Arc<FrankenStorage>
+//! held inside this engine type.
 
 mod types;
 pub use types::CassError;
 
-#[swift_bridge::bridge]
-mod ffi {
-    extern "Rust" {
-        type CassEngine;
+uniffi::setup_scaffolding!();
 
-        #[swift_bridge(associated_to = CassEngine)]
-        fn version() -> String;
-    }
-}
-
-/// Opaque engine handle. Real fields (`runtime: tokio::runtime::Runtime`,
-/// `storage: Arc<FrankenStorage>`) land in bd `one-vtg5eh`.
+#[derive(uniffi::Object)]
 pub struct CassEngine {
     _private: (),
 }
 
+#[uniffi::export]
 impl CassEngine {
-    /// Returns the cass-ffi crate version. Smoke-test used by the xcframework
-    /// build script to verify the bridge symbol actually links.
-    pub fn version() -> String {
+    /// Smoke-test constructor. Returns a non-functional engine carrying
+    /// only the crate version string. Used by the xcframework build script
+    /// to verify the bridge symbols actually link.
+    #[uniffi::constructor]
+    pub fn probe() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self { _private: () })
+    }
+
+    /// Returns the cass-ffi crate version. Verified to round-trip through
+    /// the UniFFI scaffolding by `cargo run --bin uniffi-bindgen` +
+    /// downstream Swift consumers.
+    pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
 }
