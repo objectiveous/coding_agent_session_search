@@ -1,7 +1,7 @@
 # Standalone workspace — keeps cass-ffi outside cass's implicit workspace
 # (cass has `[workspace.metadata.dist]`, which makes any nested Cargo.toml
-# an auto-member otherwise). This means our upstream rebases of cass's
-# Cargo.toml never touch cass-ffi's existence.
+# an auto-member otherwise). Upstream rebases of cass's Cargo.toml never
+# touch cass-ffi's existence.
 [workspace]
 
 [package]
@@ -9,7 +9,7 @@ name = "cass-ffi"
 version = "0.1.0"
 edition = "2024"
 authors = ["OneApp"]
-description = "FFI shim exposing the cass (coding-agent-search) library surface to Swift via swift-bridge"
+description = "FFI shim exposing the cass (coding-agent-search) library surface to Swift via UniFFI"
 license-file = "../LICENSE"
 publish = false
 
@@ -19,21 +19,36 @@ publish = false
 
 [lib]
 name = "cass_ffi"
-crate-type = ["staticlib", "rlib"]
+# `staticlib` for archive linking into the xcframework.
+# `cdylib` for the UniFFI bindgen tooling — uniffi-bindgen-swift expects
+# a dynamic library to read symbols from when emitting the matching Swift
+# module. We produce both; the xcframework consumes the static one.
+# `rlib` so `cargo check` / `cargo test` / downstream Rust unit tests work.
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 coding-agent-search = { path = ".." }
-swift-bridge = "0.1.59"
+uniffi = { version = "0.31", features = ["cli"] }
 
-# Re-exported by the bridge for error-construction at the FFI boundary.
-# Pinned to the same major series as cass's own to avoid duplicate copies.
+# Re-exported for error construction at the FFI boundary.
 anyhow = "*"
 thiserror = "*"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 tokio-util = { version = "*", features = ["rt"] }
 
 [build-dependencies]
-swift-bridge-build = "0.1.59"
+# Modern UniFFI proc-macro mode doesn't strictly require a build.rs, but
+# we keep this dep available for when we want to generate scaffolding
+# from a UDL file or run uniffi's own build-time validation.
+uniffi = { version = "0.31", features = ["build"] }
+
+# uniffi-bindgen-swift is a separate binary crate; it lives under
+# [[bin]] so consumers can run it via `cargo run --bin uniffi-bindgen`
+# from this directory to emit Swift bindings into a target dir. The
+# CassFFI.xcframework build script (bd one-4di061) drives this.
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
 
 [profile.release]
 # Match cass's release profile so the artifacts produced under
