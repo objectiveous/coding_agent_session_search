@@ -1,0 +1,9 @@
+[toolchain]
+# cass-ffi is a standalone cargo workspace (see `[workspace]` in Cargo.toml),
+# so rustup's parent-dir traversal does NOT inherit cass's nightly pin from
+# coding_agent_session_search/rust-toolchain.toml. Without this file, cargo
+# falls back to whatever default-toolchain rustup has — usually stable —
+# and the transitive #![feature(portable_simd)] in fsqlite-types errors out.
+channel = "nightly"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

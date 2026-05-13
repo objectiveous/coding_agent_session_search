@@ -1,0 +1,68 @@
+# Standalone workspace — keeps cass-ffi outside cass's implicit workspace
+# (cass has `[workspace.metadata.dist]`, which makes any nested Cargo.toml
+# an auto-member otherwise). This means our upstream rebases of cass's
+# Cargo.toml never touch cass-ffi's existence.
+[workspace]
+
+[package]
+name = "cass-ffi"
+version = "0.1.0"
+edition = "2024"
+authors = ["OneApp"]
+description = "FFI shim exposing the cass (coding-agent-search) library surface to Swift via swift-bridge"
+license-file = "../LICENSE"
+publish = false
+
+# Intentionally NOT a member of cass's [package] — kept as a sibling [package]
+# so upstream rebases of coding_agent_session_search/Cargo.toml stay clean.
+# We path-dep onto cass via `coding-agent-search = { path = ".." }`.
+
+[lib]
+name = "cass_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+coding-agent-search = { path = ".." }
+swift-bridge = "0.1.59"
+
+# Re-exported by the bridge for error-construction at the FFI boundary.
+# Pinned to the same major series as cass's own to avoid duplicate copies.
+anyhow = "*"
+thiserror = "*"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio-util = { version = "*", features = ["rt"] }
+
+[build-dependencies]
+swift-bridge-build = "0.1.59"
+
+[profile.release]
+# Match cass's release profile so the artifacts produced under
+# `cargo build --release` link without ABI surprise.
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+
+# Mirror cass's [patch] table here — cargo's [patch] is per-workspace, and
+# we made cass-ffi standalone (the `[workspace]` at the top), so cass's
+# own [patch] redirects don't propagate into cass-ffi's resolution graph.
+# Without these, cargo would fetch frankensqlite/etc. from upstream git
+# instead of resolving to the cohort sibling submodules.
+
+[patch."https://github.com/Dicklesworthstone/frankensqlite"]
+fsqlite = { path = "../../frankensqlite/crates/fsqlite" }
+fsqlite-types = { path = "../../frankensqlite/crates/fsqlite-types" }
+
+[patch."https://github.com/Dicklesworthstone/franken_agent_detection"]
+franken-agent-detection = { path = "../../franken_agent_detection" }
+
+[patch."https://github.com/Dicklesworthstone/frankensearch"]
+frankensearch = { path = "../../frankensearch/frankensearch" }
+
+[patch."https://github.com/Dicklesworthstone/frankentui"]
+ftui = { path = "../../frankentui/crates/ftui" }
+ftui-runtime = { path = "../../frankentui/crates/ftui-runtime" }
+ftui-tty = { path = "../../frankentui/crates/ftui-tty" }
+ftui-extras = { path = "../../frankentui/crates/ftui-extras" }
+
+[patch."https://github.com/Dicklesworthstone/toon_rust"]
+tru = { path = "../../toon_rust" }
