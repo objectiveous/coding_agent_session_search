@@ -256,16 +256,16 @@ impl CassEngine {
         self.data_dir.to_string_lossy().into_owned()
     }
 
-    /// Trigger a one-shot indexing pass against this engine's data_dir.
-    /// Equivalent to the free-standing `start_index_at_path` — see that
-    /// function's doc for the discovery model. Useful when the caller
-    /// already has an open engine (incremental re-index path).
+    /// Trigger a one-shot incremental indexing pass against this engine's
+    /// data_dir. Useful when the caller already has an open engine and wants
+    /// to catch up newly written sessions without paying the full archive scan
+    /// used by first-launch bootstrap.
     pub async fn start_index(
         &self,
         force_rebuild: bool,
     ) -> Result<Arc<IndexRun>, CassError> {
         let data_dir = self.data_dir.clone();
-        start_index_inner(data_dir, force_rebuild, Some(&self.runtime)).await
+        start_index_inner(data_dir, false, force_rebuild, Some(&self.runtime)).await
     }
 }
 
@@ -290,7 +290,7 @@ pub async fn start_index_at_path(
     data_dir: String,
     force_rebuild: bool,
 ) -> Result<Arc<IndexRun>, CassError> {
-    start_index_inner(PathBuf::from(data_dir), force_rebuild, None).await
+    start_index_inner(PathBuf::from(data_dir), true, force_rebuild, None).await
 }
 
 /// Shared implementation for the engine-bound `start_index` and the
@@ -301,27 +301,12 @@ pub async fn start_index_at_path(
 /// `tokio::task::spawn_blocking`.
 async fn start_index_inner(
     data_dir: PathBuf,
+    full: bool,
     force_rebuild: bool,
     runtime_override: Option<&Runtime>,
 ) -> Result<Arc<IndexRun>, CassError> {
     let progress = Arc::new(IndexingProgress::default());
-    let db_path = data_dir.join("agent_search.db");
-
-    let opts = IndexOptions {
-        full: true,
-        force_rebuild,
-        watch: false,
-        watch_once_paths: None,
-        db_path,
-        data_dir,
-        // v1 is lexical-only — semantic indexing requires a separate
-        // embedder install flow that lands later.
-        semantic: false,
-        build_hnsw: false,
-        embedder: "hash".to_string(),
-        progress: Some(progress.clone()),
-        watch_interval_secs: 30,
-    };
+    let opts = index_options_for_ffi(data_dir, full, force_rebuild, Some(progress.clone()));
 
     let join = if let Some(runtime) = runtime_override {
         runtime.spawn_blocking(move || run_index(opts, None).map_err(CassError::from))
@@ -333,6 +318,62 @@ async fn start_index_inner(
         progress,
         join_handle: tokio::sync::Mutex::new(Some(join)),
     }))
+}
+
+fn index_options_for_ffi(
+    data_dir: PathBuf,
+    full: bool,
+    force_rebuild: bool,
+    progress: Option<Arc<IndexingProgress>>,
+) -> IndexOptions {
+    let db_path = data_dir.join("agent_search.db");
+    IndexOptions {
+        full,
+        force_rebuild,
+        watch: false,
+        watch_once_paths: None,
+        db_path,
+        data_dir,
+        // v1 is lexical-only — semantic indexing requires a separate
+        // embedder install flow that lands later.
+        semantic: false,
+        build_hnsw: false,
+        embedder: "hash".to_string(),
+        progress,
+        watch_interval_secs: 30,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_bound_index_uses_incremental_mode() {
+        let opts = index_options_for_ffi(PathBuf::from("/tmp/cass-ffi-test"), false, false, None);
+        assert!(
+            !opts.full,
+            "CassEngine.start_index must use the incremental indexer path"
+        );
+        assert!(
+            !opts.force_rebuild,
+            "default app-triggered indexing should not force a rebuild"
+        );
+    }
+
+    #[test]
+    fn path_bootstrap_index_uses_full_mode() {
+        let opts = index_options_for_ffi(PathBuf::from("/tmp/cass-ffi-test"), true, false, None);
+        assert!(
+            opts.full,
+            "start_index_at_path bootstraps missing data dirs with a full scan"
+        );
+    }
+
+    #[test]
+    fn probe_version_is_cargo_pkg_version() {
+        assert_eq!(CassEngine::probe().version(), env!("CARGO_PKG_VERSION"));
+    }
 }
 
 impl CassEngine {
@@ -451,15 +492,5 @@ fn match_type_to_string(mt: MatchType) -> &'static str {
         MatchType::Substring => "substring",
         MatchType::Wildcard => "wildcard",
         MatchType::ImplicitWildcard => "implicit_wildcard",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn probe_version_is_cargo_pkg_version() {
-        assert_eq!(CassEngine::probe().version(), env!("CARGO_PKG_VERSION"));
     }
 }
