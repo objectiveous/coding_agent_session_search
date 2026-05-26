@@ -2384,6 +2384,14 @@ impl Drop for IndexRunLockGuard {
         let _ = self.file.flush();
         let _ = crate::search::asset_state::clear_index_run_lock_metadata_sidecar(&self._path);
         let _ = self.file.unlock();
+        // Remove the lock file after releasing the OS flock. Leaving a
+        // 0-byte file around on every shutdown was confusing operators
+        // ("is this active?") and gave the false impression that an
+        // index run was still in progress. probe_index_run_lock already
+        // handles the absent-file case as `not active`, so this is
+        // strictly a cleanup of stale evidence — concurrent acquirers
+        // re-create the file via `OpenOptions::create(true)`.
+        let _ = std::fs::remove_file(&self._path);
     }
 }
 
