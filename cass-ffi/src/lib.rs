@@ -45,7 +45,8 @@ use coding_agent_search::model::types::{
 };
 use coding_agent_search::run_search_lexical_self_heal;
 use coding_agent_search::search::query::{
-    FieldMask, MatchType, SearchClient, SearchFilters, SearchHit as CassSearchHit,
+    FieldMask, MatchType, SearchClient, SearchClientOptions, SearchFilters,
+    SearchHit as CassSearchHit,
 };
 use coding_agent_search::search::tantivy::expected_index_dir;
 use coding_agent_search::ui::data::ConversationView;
@@ -137,9 +138,28 @@ impl CassEngine {
         // worker exits) than to roll back the SearchClient + tokio runtime.
         let storage = StorageWorker::spawn(layout.db_path.clone())?;
 
-        let search = SearchClient::open(&layout.index_path, Some(&layout.db_path))
-            .map_err(CassError::from)?
-            .ok_or_else(|| CassError::data_dir_missing_index(&layout.index_path, &layout.db_path))?;
+        // Match the `cass search` CLI's reader contract (lib.rs run_cli_search):
+        // snapshot reader, no on-search reload, no warm worker. The CLI exits
+        // after one query and re-opens for the next; long-lived FFI consumers
+        // (FlashbacksEngine) follow the same pattern by close+reopen-ing the
+        // engine when they want to see content indexed since open. With
+        // `enable_reload: true` (the previous default), every search
+        // re-acquired tantivy's META_LOCK, and any background indexer that
+        // ran `run_index` concurrently could rename the live index directory
+        // out from under the reader — surfacing as
+        // `Failed to acquire Lockfile: IoError(Os { code: 2, kind: NotFound })`
+        // (the bare `From<LockError>` path in tantivy's reader/mod.rs:194).
+        // Snapshot semantics avoid the race entirely.
+        let search = SearchClient::open_with_options(
+            &layout.index_path,
+            Some(&layout.db_path),
+            SearchClientOptions {
+                enable_reload: false,
+                enable_warm: false,
+            },
+        )
+        .map_err(CassError::from)?
+        .ok_or_else(|| CassError::data_dir_missing_index(&layout.index_path, &layout.db_path))?;
         let runtime = Runtime::new().map_err(|err| CassError::internal(err.to_string()))?;
 
         Ok(Arc::new(Self {
