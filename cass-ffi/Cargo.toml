@@ -75,8 +75,10 @@ codegen-units = 16
 # own [patch] redirects don't propagate into cass-ffi's resolution graph.
 # Without these, cargo would fetch frankensqlite/etc. from upstream git
 # instead of resolving to the cohort sibling submodules.
-
-[patch."https://github.com/Dicklesworthstone/frankensqlite"]
+#
+# fsqlite/fsqlite-types reach this graph as crates.io deps (0.1.5) via the
+# parent cass crate, so they patch through [patch.crates-io], not the git URL.
+[patch.crates-io]
 fsqlite = { path = "../../frankensqlite/crates/fsqlite" }
 fsqlite-types = { path = "../../frankensqlite/crates/fsqlite-types" }
 
